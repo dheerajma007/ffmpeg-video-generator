@@ -61,12 +61,15 @@ def generate_video():
         # Repeat last frame without duration
         input_file.write(f"file '{image_paths[-1]}'\n")
 
+    with open(input_txt_path, 'r') as f:
+        print(f.read())
+
     # Generate video
     video_path = os.path.join(job_dir, "output.mp4")
     ffmpeg_cmd = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", input_txt_path, "-i", audio_path,
-        "-shortest", "-vsync", "vfr",
+        "-c:v", "libx264", "-c:a", "aac", "-vsync", "vfr",
         "-pix_fmt", "yuv420p", video_path
     ]
     subprocess.run(ffmpeg_cmd, check=True)
