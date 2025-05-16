@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: ffmpeg-service
+    env: python
+    buildCommand: ./build.sh
+    startCommand: ./start.sh

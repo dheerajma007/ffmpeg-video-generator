@@ -1,43 +1,78 @@
-from flask import Flask, request, send_file
-import os, base64, subprocess, uuid
+from flask import Flask, request, jsonify, send_file
+import os
 import requests
+import subprocess
+import uuid
+import tempfile
 
 app = Flask(__name__)
+WORKDIR = os.path.join(tempfile.gettempdir(), "ffmpeg_jobs")
+
+os.makedirs(WORKDIR, exist_ok=True)
+
+def download_file(url, file_path):
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    try:
+        with requests.get(url, headers=headers, stream=True, timeout=15) as r:
+            r.raise_for_status()
+            with open(file_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        print("Download complete.")
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to download: {e}")
 
 @app.route("/generate-video", methods=["POST"])
 def generate_video():
     data = request.get_json()
-    audio_b64 = data.get("audio")
-    image_urls = data.get("images")
+    audio_url = data["audio_url"]
+    frames = data["frames"]  # list of {image_url, duration}
 
-    uid = str(uuid.uuid4())
-    workdir = f"/tmp/{uid}"
-    os.makedirs(workdir, exist_ok=True)
+    job_id = str(uuid.uuid4())
+    job_dir = os.path.join(WORKDIR, job_id)
+    os.makedirs(job_dir)
 
-    audio_path = f"{workdir}/audio.mp3"
-    with open(audio_path, "wb") as f:
-        f.write(base64.b64decode(audio_b64))
+    # Download audio
+    audio_path = os.path.join(job_dir, "audio.mp3")
+#    with open(audio_path, "wb") as f:
+#        f.write(requests.get(audio_url).content)
+    download_file(audio_url, audio_path)
 
+    
+
+    # Download images and prepare input.txt
+    input_txt_path = os.path.join(job_dir, "input.txt")
     image_paths = []
-    for i, url in enumerate(image_urls):
-        img_path = f"{workdir}/img{i}.jpg"
-        with open(img_path, "wb") as f:
-            f.write(requests.get(url).content)
-        image_paths.append(img_path)
 
-    # Create FFmpeg input list
-    with open(f"{workdir}/input.txt", "w") as f:
-        for path in image_paths:
-            f.write(f"file '{path}'\nduration 2\n")
-        f.write(f"file '{image_paths[-1]}'\n")
+    with open(input_txt_path, "w") as input_file:
+        for i, frame in enumerate(frames):
+            #img_resp = requests.get(frame["image_url"])
+            img_path = os.path.join(job_dir, f"img_{i}.jpg")
+            #with open(img_path, "wb") as img_file:
+            #    img_file.write(img_resp.content)
+            download_file(frame["image_url"], img_path)
 
-    output_path = f"{workdir}/output.mp4"
-    subprocess.run([
+            image_paths.append(img_path)
+            input_file.write(f"file '{img_path}'\n")
+            input_file.write(f"duration {frame['duration']}\n")
+
+        # Repeat last frame without duration
+        input_file.write(f"file '{image_paths[-1]}'\n")
+
+    # Generate video
+    video_path = os.path.join(job_dir, "output.mp4")
+    ffmpeg_cmd = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", f"{workdir}/input.txt",
-        "-i", audio_path,
-        "-c:v", "libx264", "-c:a", "aac",
-        "-shortest", output_path
-    ], check=True)
+        "-i", input_txt_path, "-i", audio_path,
+        "-shortest", "-vsync", "vfr",
+        "-pix_fmt", "yuv420p", video_path
+    ]
+    subprocess.run(ffmpeg_cmd, check=True)
 
-    return send_file(output_path, mimetype="video/mp4")
+    # TODO: Upload `video_path` to a file host like transfer.sh, return link
+    return send_file(video_path, mimetype="video/mp4")
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000)
