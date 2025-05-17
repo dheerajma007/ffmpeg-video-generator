@@ -74,6 +74,8 @@ def generate_video():
     ]
     subprocess.run(ffmpeg_cmd, check=True)
 
+    printf("Video generated")
+
     # TODO: Upload `video_path` to a file host like transfer.sh, return link
     return send_file(video_path, mimetype="video/mp4")
 
